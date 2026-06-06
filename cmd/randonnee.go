@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
 	"html"
 	"io"
@@ -220,17 +221,17 @@ type cirkwiCandidate struct {
 // source répond avec un fichier GPX valide.
 func fetchTrace(c circuit, dest string) (string, error) {
 	if u, ok := overrides[c.libelle]; ok {
-		if err := downloadGPX(u, dest); err == nil {
+		if err := downloadGPX(u, dest, c.libelle); err == nil {
 			return "override (" + u + ")", nil
 		}
 	}
 	if c.cirkwiID != "" {
-		if err := downloadGPX(fmt.Sprintf(cirkwiGPXFmt, c.cirkwiID), dest); err == nil {
+		if err := downloadGPX(fmt.Sprintf(cirkwiGPXFmt, c.cirkwiID), dest, c.libelle); err == nil {
 			return "Cirkwi", nil
 		}
 	}
 	if id, slug, score, weak, err := searchCirkwiSitemap(c.libelle); err == nil {
-		if err := downloadGPX(fmt.Sprintf(cirkwiGPXFmt, id), dest); err == nil {
+		if err := downloadGPX(fmt.Sprintf(cirkwiGPXFmt, id), dest, c.libelle); err == nil {
 			tag := fmt.Sprintf("Cirkwi sitemap (%d, %s)", score, slug)
 			if weak {
 				tag = "Cirkwi sitemap FAIBLE — " + tag
@@ -240,13 +241,13 @@ func fetchTrace(c circuit, dest string) (string, error) {
 	}
 	if c.ivTourURL != "" {
 		if gpxURL, err := findIVTourGPX(c.ivTourURL); err == nil {
-			if err := downloadGPX(gpxURL, dest); err == nil {
+			if err := downloadGPX(gpxURL, dest, c.libelle); err == nil {
 				return "Ille-et-Vilaine Tourisme", nil
 			}
 		}
 	}
 	if hit, err := searchVisuGPX(c.libelle); err == nil {
-		if err := downloadGPX(hit.url, dest); err == nil {
+		if err := downloadGPX(hit.url, dest, c.libelle); err == nil {
 			tag := fmt.Sprintf("VisuGPX (%d/%d, « %s »)", hit.score, hit.maxScore, hit.label)
 			if hit.score < 2 {
 				tag = "VisuGPX FAIBLE — " + tag
@@ -509,10 +510,80 @@ func findIVTourGPX(pageURL string) (string, error) {
 	return string(m), nil
 }
 
-// downloadGPX télécharge un GPX et vérifie qu'il s'agit bien d'un fichier XML
+// wptRE matche un waypoint GPX, qu'il soit auto-fermé ou avec sous-éléments.
+// Les <wpt> ne s'imbriquent pas, donc le ".*?" non-greedy capture jusqu'au
+// </wpt> correspondant.
+var wptRE = regexp.MustCompile(`(?s)<wpt\b[^>]*?/>|<wpt\b[^>]*>.*?</wpt>`)
+
+// Regexes pour positionner/remplacer le nom du circuit dans les métadonnées GPX.
+var (
+	metaWithNameRE          = regexp.MustCompile(`(?s)<metadata\b[^>]*>.*?<name(?:\s[^>]*)?>.*?</name>`)
+	innerNameRE             = regexp.MustCompile(`(?s)<name(?:\s[^>]*)?>.*?</name>`)
+	metaOpenRE              = regexp.MustCompile(`<metadata\b[^>]*>`)
+	gpxOpenRE               = regexp.MustCompile(`<gpx\b[^>]*>`)
+	trkWithOptionalNameRE   = regexp.MustCompile(`(?s)<trk\b[^>]*>(?:\s*<name(?:\s[^>]*)?>.*?</name>)?`)
+	trkOpenTagRE            = regexp.MustCompile(`^<trk\b[^>]*>`)
+)
+
+// setGPXTrackName insère ou remplace le <name> placé au début de chaque <trk>
+// par le libellé du circuit LCC. uMap nomme une trace importée d'après ce
+// <trk><name>, donc cette balise est indispensable pour que le calque reçoive
+// le bon nom à l'import.
+func setGPXTrackName(body []byte, name string) []byte {
+	newName := []byte("<name><![CDATA[" + name + "]]></name>")
+	return trkWithOptionalNameRE.ReplaceAllFunc(body, func(match []byte) []byte {
+		openTag := trkOpenTagRE.Find(match)
+		out := make([]byte, 0, len(openTag)+len(newName))
+		out = append(out, openTag...)
+		out = append(out, newName...)
+		return out
+	})
+}
+
+// setGPXMetadataName insère ou remplace le <name> dans <metadata> par le
+// libellé du circuit LCC. Utilise CDATA pour éviter d'avoir à échapper le XML.
+func setGPXMetadataName(body []byte, name string) []byte {
+	newName := []byte("<name><![CDATA[" + name + "]]></name>")
+	// Cas 1 : <metadata>…<name>…</name>…</metadata> → on remplace juste <name>.
+	if loc := metaWithNameRE.FindIndex(body); loc != nil {
+		chunk := body[loc[0]:loc[1]]
+		replaced := innerNameRE.ReplaceAll(chunk, newName)
+		var b bytes.Buffer
+		b.Grow(len(body) + len(newName))
+		b.Write(body[:loc[0]])
+		b.Write(replaced)
+		b.Write(body[loc[1]:])
+		return b.Bytes()
+	}
+	// Cas 2 : <metadata> sans <name> → on insère juste après.
+	if loc := metaOpenRE.FindIndex(body); loc != nil {
+		var b bytes.Buffer
+		b.Grow(len(body) + len(newName))
+		b.Write(body[:loc[1]])
+		b.Write(newName)
+		b.Write(body[loc[1]:])
+		return b.Bytes()
+	}
+	// Cas 3 : pas de <metadata> → on en ajoute un juste après <gpx ...>.
+	if loc := gpxOpenRE.FindIndex(body); loc != nil {
+		var b bytes.Buffer
+		b.Grow(len(body) + len(newName) + 20)
+		b.Write(body[:loc[1]])
+		b.WriteString("<metadata>")
+		b.Write(newName)
+		b.WriteString("</metadata>")
+		b.Write(body[loc[1]:])
+		return b.Bytes()
+	}
+	return body
+}
+
+// downloadGPX télécharge un GPX, vérifie qu'il s'agit bien d'un fichier XML
 // GPX — Cirkwi renvoie parfois une page d'erreur HTML 200 ("Impossible de
-// trouver le circuit demandé.") quand un circuit n'a pas de trace exportable.
-func downloadGPX(src, dest string) error {
+// trouver le circuit demandé.") quand un circuit n'a pas de trace exportable —
+// puis supprime les points remarquables (<wpt>) et inscrit name dans les
+// métadonnées avant écriture.
+func downloadGPX(src, dest, name string) error {
 	body, err := httpGetBody(src)
 	if err != nil {
 		return err
@@ -524,6 +595,9 @@ func downloadGPX(src, dest string) error {
 	if !strings.HasPrefix(head, "<?xml") {
 		return fmt.Errorf("réponse non-GPX : %q", head)
 	}
+	body = wptRE.ReplaceAll(body, nil)
+	body = setGPXMetadataName(body, name)
+	body = setGPXTrackName(body, name)
 	return os.WriteFile(dest, body, 0644)
 }
 

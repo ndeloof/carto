@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no" ?>
 <gpx xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd" version="1.1" creator="VisuGPX - https://www.visugpx.com">
   <metadata>
-    <name>Mézières-sur-Couesnon, la vallée du Couesnon</name>
+    <name><![CDATA[Balade au Pays du Couesnon à Mézières-sur-Couesnon]]></name>
     <desc><![CDATA[La vallée du Couesnon est l'un des plus beaux site de randonnée d'Ille-et-Vilaine. Les sentiers aménagés sur les 2 versants boisés de la vallée offrent de nombreuses combinaisons de parcours. Le circuit proposé ici correspond à l'option la plus longue et la plus sportive.
 [i]NB : Suite aux crues de l'hiver 2024-2025, la passerelle des Intrépides est fermée. L'itinéraire est en conséquence modifié à l'ouest de la vallée.[/i]
 Départ : parking du château de la Ville Olivier.
@@ -17,13 +17,8 @@ Départ : parking du château de la Ville Olivier.
 [b]Circuits de Mézières-sur-Couenon[/b] : [url]https://www.visugpx.com/btHmKfkbx[/url]
 [b]Site internet de Félix35[/b] : [url]https://www.au-fil-des-sentiers.fr/[/url]]]></desc>
   </metadata>
-  <wpt lat="48.30671" lon="-1.43269">
-    <ele>55.3</ele>
-    <name><![CDATA[Parking la ville Olivier]]></name>
-    <type><![CDATA[park]]></type>
-  </wpt>
-  <trk>
-    <name><![CDATA[20181006150249-l34E7]]></name>
+  
+  <trk><name><![CDATA[Balade au Pays du Couesnon à Mézières-sur-Couesnon]]></name>
     <extensions>
       <line xmlns="http://www.topografix.com/GPX/gpx_style/0/2">
         <color>0000FF</color>
